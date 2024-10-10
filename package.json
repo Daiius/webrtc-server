@@ -1,0 +1,19 @@
+{
+	"type": "module",
+	"dependencies": {
+		"@types/sdp-transform": "^2.4.9",
+		"express": "^4.21.0",
+		"express-ws": "^5.0.2",
+		"mediasoup": "^3.14.14",
+		"mediasoup-client": "^3.7.17",
+		"sdp-transform": "^2.14.2",
+		"socket.io": "^4.8.0",
+		"tsx": "^4.19.1"
+	},
+	"devDependencies": {
+		"@types/express": "^5.0.0",
+		"@types/express-ws": "^3.0.5",
+		"@types/node": "^22.7.4",
+		"typescript": "^5.6.3"
+	}
+}
