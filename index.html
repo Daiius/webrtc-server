@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebRTC with mediasoup-client</title>
+</head>
+<body>
+  <video id="remoteVideo" autoplay></video>
+  <script type="module">
+    import * as client from './client.js';
+    const transport = await client.createTransport();
+    const producerIdRespose = await fetch('http://localhost:3000/whep/video-producer-id');
+    const producerId = await producerIdResponse.json();
+          
+    const videoStream = await transport.consume({
+      id: producerId,
+      producerId: producerId,
+      kind: 'video',
+      rtpParameters: transport.rtpParameters
+    });
+    
+    document.getElementById('remoteVideo').srcObject = new MediaStream([videoStream.track]);
+  </script>
+</body>
+</html>
+
