@@ -1,7 +1,5 @@
 import { createServer } from 'http';
-import { Server } from 'socket.io';
 import express from 'express';
-import expressWs from 'express-ws';
 import mediasoup, { createWorker } from 'mediasoup';
 import { 
   WebRtcTransport,
@@ -14,28 +12,28 @@ import ortc from 'mediasoup-client/lib/ortc';
 import sdpCommonUtils from 'mediasoup-client/lib/handlers/sdp/commonUtils';
 import sdpUnifiedPlanUtils from 'mediasoup-client/lib/handlers/sdp/unifiedPlanUtils';
 
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
+
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 
 const app = express();
 app.use(express.json());
 app.use(express.text({
   type: ['application/sdp', 'text/plain']
 }));
-app.use(async (req, res, next) => {
-  console.log('req: ', req);
-  next();
-});
-
-const appWs = expressWs(app);
 
 const httpServer = createServer(app);
-const io = new Server(httpServer, { 
-  transports: ['polling', 'websocket'],
-  path: '/whip/test-broadcast',
-});
 
 let worker: mediasoup.types.Worker;
 let router: mediasoup.types.Router;
 let broadcasterTransport: WebRtcTransport;
+let audioProducer: mediasoup.types.Producer;
+let videoProducer: mediasoup.types.Producer;
+let streamerTransport: WebRtcTransport;
 
 
 const startServer = async () => {
@@ -69,22 +67,6 @@ const startServer = async () => {
   router = await worker.createRouter({ mediaCodecs });
   console.log('Router created');
 
-  io.on('connection', (socket) => {
-    console.log('Client (broadcaster) connected.');
-
-    socket.on('join', async () => {
-      console.log('websocket join');
-    });
-
-    socket.on('error', (err) => {
-      console.error('Socket.IO error: ', err);
-    });
-
-    socket.on('disconnect', (reason) => {
-      console.log('Client disconnected: ', reason);
-    });
-  });
-
   httpServer.listen(3000, () => {
     console.log('mediasoup server running on port 3000');
   });
@@ -95,7 +77,7 @@ const createWebRtcTransport = async (
   router: mediasoup.types.Router
 ): Promise<WebRtcTransport> => {
   const transport: WebRtcTransport = await router.createWebRtcTransport({
-    listenIps: [{ ip: '0.0.0.0', announcedIp: 'localhost:3000'}],
+    listenIps: [{ ip: '0.0.0.0', announcedIp: process.env.ANNOUNCED_IP}],
     enableUdp: true,
     enableTcp: true,
     preferUdp: true,
@@ -108,15 +90,6 @@ const createWebRtcTransport = async (
 // for OBS WHIP protocol
 app.post('/whip', async (req, res) => {
   console.log('/whip post access');
-  const offer = req.body.sdp;
-  
-  // OBS sends empty offer...
-  //console.log('offer: ', offer);
-
-  //if (!offer) {
-  //  res.status(400).send('Missing SDP offer');
-  //}
-  
 
   try {
     const localSdpObject = sdpTransform.parse(req.body.toString());
@@ -189,9 +162,6 @@ app.post('/whip', async (req, res) => {
       sendingRtpParameters.encodings =
         sdpUnifiedPlanUtils.getRtpEncodings({ offerMediaObject });
 
-      if (broadcasterTransport.closed) {
-        await broadcasterTransport.connect({ dtlsParameters });
-      }
 
       remoteSdp.send({
         offerMediaObject,
@@ -202,20 +172,20 @@ app.post('/whip', async (req, res) => {
         extmapAllowMixed: true
       });
 
-      //console.log('router capability: ', router.rtpCapabilities);
-      //console.log('creating producer...: ', sendingRtpParameters);
       const producer = await broadcasterTransport.produce({
         kind: type as 'video' | 'audio',
         rtpParameters: sendingRtpParameters
       });
 
   
-      //console.log('producer created: ', producer);
+      console.log('producer created: ', producer);
 
-      //type === 'video'
-      //  ? videoProducer = producer
-      //  : audioProducer = producer;
+      type === 'video'
+        ? videoProducer = producer
+        : audioProducer = producer;
     }
+
+    await broadcasterTransport.connect({ dtlsParameters });
 
     const answer = remoteSdp.getSdp();
     console.log('answer: ', answer);
@@ -241,36 +211,153 @@ app.delete('/whip/test-broadcast', async (_req, res) => {
   console.log(`transport: ${broadcasterTransport?.id} closed.`);
 });
 
-app.get('/whip/test-broadcast', async (req, res) => {
-  console.log('GET /whip/test-broadcast');
-  res.status(200).send('GET request to /whip/test-broadcast');
+app.post('/whep', async (req, res) => {
+  try {
+    const localSdpObject = sdpTransform.parse(req.body.toString());
+    console.log('body: ', req.body.toString());
+    const rtpCapabilities = sdpCommonUtils.extractRtpCapabilities({
+      sdpObject: localSdpObject
+    });
+    const dtlsParameters = sdpCommonUtils.extractDtlsParameters({
+      sdpObject: localSdpObject
+    });
+    const extendedRtpCapabilities = ortc.getExtendedRtpCapabilities(
+      rtpCapabilities, 
+      router.rtpCapabilities
+    );
+    const sendingRtpParametersByKind: Record<'audio' | 'video', mediasoup.types.RtpParameters> = {
+      audio: 
+        ortc.getSendingRtpParameters(
+          'audio', extendedRtpCapabilities
+        ),
+      video: 
+        ortc.getSendingRtpParameters(
+          'video', extendedRtpCapabilities
+        ),
+    };
+    const sendingRemoteRtpParametersByKind: Record<'audio' | 'video', mediasoup.types.RtpParameters> = {
+      audio: 
+        ortc.getSendingRemoteRtpParameters(
+          'audio', extendedRtpCapabilities
+        ),
+      video:
+        ortc.getSendingRemoteRtpParameters(
+          'video', extendedRtpCapabilities
+        )
+    };
+    
+    streamerTransport = await createWebRtcTransport(router);
+
+    await streamerTransport.setMaxIncomingBitrate(1500000);
+
+    const remoteSdp = new RemoteSdp({
+      iceParameters: broadcasterTransport.iceParameters/*{
+        ...broadcasterTransport.iceParameters,
+        usernameFragment: localSdpObject.iceUfrag ?? '',
+      }*/,
+      iceCandidates: broadcasterTransport.iceCandidates,
+      dtlsParameters: {
+        ...broadcasterTransport.dtlsParameters,
+        role: 'client',
+      },
+      sctpParameters: broadcasterTransport.sctpParameters,
+    });
+
+
+    for (const { type, mid } of localSdpObject.media) {
+
+      console.log('type, mid: ', { type, mid });
+
+      const mediaSectionIdx = remoteSdp.getNextMediaSectionIdx();
+      const offerMediaObject = localSdpObject.media[mediaSectionIdx.idx];
+      const sendingRtpParameters: mediasoup.types.RtpParameters = { 
+        ...sendingRtpParametersByKind[type as 'video' | 'audio']
+      };
+      const sendingRemoteRtpParameters: mediasoup.types.RtpParameters = {
+        ...sendingRemoteRtpParametersByKind[type as 'video' | 'audio']
+      };
+
+      sendingRtpParameters.mid = mid?.toString();
+      sendingRtpParameters.rtcp!.cname =
+        sdpCommonUtils.getCname({ offerMediaObject });
+      sendingRtpParameters.encodings =
+        sdpUnifiedPlanUtils.getRtpEncodings({ offerMediaObject });
+
+      remoteSdp.send({
+        offerMediaObject,
+        reuseMid: mediaSectionIdx.reuseMid,
+        offerRtpParameters: sendingRtpParameters,
+        answerRtpParameters: sendingRemoteRtpParameters,
+        codecOptions: {},
+        extmapAllowMixed: true
+      });
+
+      const consumer = await streamerTransport.consume({
+        producerId: 
+          type === 'video' 
+            ? videoProducer.id
+            : audioProducer.id,
+        rtpCapabilities: rtpCapabilities,
+      });
+
+  
+      console.log('consumer created: ', consumer);
+
+      //type === 'video'
+      //  ? videoProducer = producer
+      //  : audioProducer = producer;
+    }
+    await streamerTransport.connect({ dtlsParameters });
+
+    const answer = remoteSdp.getSdp();
+    console.log('answer: ', answer);
+
+    res
+      .type('application/sdp')
+      .appendHeader(
+        'Location', 
+        'http://localhost:3000/whep/test-stream'
+      )
+      .status(201)
+      .send(answer.toString());
+  } catch (error) {
+    console.error('Error during WebRTC offer handling: ', error);
+    res.status(500);
+  }
+});
+
+app.delete('/whep/test-stream', async (_req, res) => {
+  streamerTransport?.close();
+  console.log('streamerTransport closed');
+  res.status(200); 
+});
+
+app.get('/whep/router-capabilities', async (_req, res) => {
+  res.status(200).send(router.rtpCapabilities);
+});
+
+app.get('/whep/transport', async (_req, res) => {
+  console.log('streamerTransport parameter');
+  res.status(200).send({
+    id: streamerTransport?.id,
+    iceParameters: streamerTransport?.iceParameters,
+    iceCandidates: streamerTransport?.iceCandidates,
+    dtlsParameters: streamerTransport?.dtlsParameters,
+    sctpParameters: streamerTransport?.sctpParameters,
+  });
 })
 
-app.post('/whip/test-broadcast', async (req, res) => {
-  console.log('POST /whip/test-broadcast');
-  res.status(200).send('POST request to /whip/test-broadcast');
+app.get('/whep/video-producer-id', async (_req, res) => {
+  console.log('videoProducer id');
+  res.status(200).send(videoProducer?.id);
 });
 
-app.patch('/whip/test-broadcast', async (req, res) => {
-  console.log('PATCH /whip/test-broadcast');
-  res.status(200).send('PATCH request to /whip/test-broadcast');
+app.get('/', async (req, res) => {
+  res.sendFile(join(__dirname, 'index.html'));
 });
 
-
-appWs.app.ws('/whip/test-broadcast', async (ws, req) => {
-  console.log('websocket recieved');
-  ws.on('open', () => {
-    console.log('websocket opened!');
-  });
-  ws.on('upgrade', () => {
-    console.log('websocket upgrade');
-  });
-  ws.on('unexpected-response', () => {
-    console.log('websocket unexpecetd-response');
-  });
-  ws.on('message', msg => {
-    console.log('message recieved: length ', msg.toString().length);
-  });
+app.get('/client.js', async (req, res) => {
+  res.sendFile(join(__dirname, 'client.js'));
 });
 
 startServer().catch(err => {
