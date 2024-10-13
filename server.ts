@@ -45,7 +45,10 @@ let consumers: Record<'video'|'audio', mediasoup.types.Producer> = {
 
 
 const startServer = async () => {
-  worker = await createWorker();
+  worker = await createWorker({
+    logLevel: 'warn',
+    logTags: [ 'info', 'ice', 'dtls', 'rtp', 'rtcp' ],
+  });
   console.log('Worker created');
 
   const mediaCodecs: mediasoup.types.RtpCodecCapability[] = [
@@ -133,9 +136,11 @@ app.post('/whip', async (req, res) => {
         )
     };
     
-    broadcasterTransport = await createWebRtcTransport(router);
+    if (broadcasterTransport == null) {
+      broadcasterTransport = await createWebRtcTransport(router);
+    }
 
-    await broadcasterTransport.setMaxIncomingBitrate(1500000);
+    //await broadcasterTransport.setMaxIncomingBitrate(1500000);
 
     const remoteSdp = new RemoteSdp({
       iceParameters: broadcasterTransport.iceParameters/*{
@@ -149,6 +154,8 @@ app.post('/whip', async (req, res) => {
       },
       sctpParameters: broadcasterTransport.sctpParameters,
     });
+    
+    await broadcasterTransport.connect({ dtlsParameters });
 
 
     for (const { type, mid } of localSdpObject.media) {
@@ -157,6 +164,8 @@ app.post('/whip', async (req, res) => {
 
       const mediaSectionIdx = remoteSdp.getNextMediaSectionIdx();
       const offerMediaObject = localSdpObject.media[mediaSectionIdx.idx];
+      console.log('offerMediaObject: ', offerMediaObject);
+
       const sendingRtpParameters: mediasoup.types.RtpParameters = { 
         ...sendingRtpParametersByKind[type as 'video' | 'audio']
       };
@@ -164,11 +173,14 @@ app.post('/whip', async (req, res) => {
         ...sendingRemoteRtpParametersByKind[type as 'video' | 'audio']
       };
 
-      sendingRtpParameters.mid = mid?.toString();
+      sendingRtpParameters.mid = (mid as unknown as number).toString();
       sendingRtpParameters.rtcp!.cname =
         sdpCommonUtils.getCname({ offerMediaObject });
       sendingRtpParameters.encodings =
         sdpUnifiedPlanUtils.getRtpEncodings({ offerMediaObject });
+    
+      console.log('%o', sendingRtpParameters);
+      console.log('%o', sendingRemoteRtpParameters);
 
 
       remoteSdp.send({
@@ -191,7 +203,6 @@ app.post('/whip', async (req, res) => {
       producers[type as 'video'|'audio'] = producer;
     }
 
-    await broadcasterTransport.connect({ dtlsParameters });
 
     const answer = remoteSdp.getSdp();
     console.log('answer: ', answer);
@@ -254,7 +265,7 @@ app.post('/whep', async (req, res) => {
     
     streamerTransport = await createWebRtcTransport(router);
 
-    await streamerTransport.setMaxIncomingBitrate(1500000);
+    //await streamerTransport.setMaxIncomingBitrate(1500000);
 
     const remoteSdp: RemoteSdp = new RemoteSdp({
       iceParameters: streamerTransport?.iceParameters,
@@ -265,6 +276,8 @@ app.post('/whep', async (req, res) => {
       },
       sctpParameters: streamerTransport.sctpParameters,
     });
+
+    await streamerTransport.connect({ dtlsParameters });
 
 
     for (const { type, mid } of localSdpObject.media) {
@@ -304,7 +317,6 @@ app.post('/whep', async (req, res) => {
       consumers[type as 'vidoe' | 'audio'] = consumer;
 
     }
-    await streamerTransport.connect({ dtlsParameters });
 
     // mediasoup用の情報を追加する
     // transportId, videoProducerId, audioProducerId の3つを
@@ -344,26 +356,6 @@ app.delete('/whep/test-stream', async (_req, res) => {
   streamerTransport?.close();
   console.log('streamerTransport closed');
   res.status(200); 
-});
-
-app.get('/whep/router-capabilities', async (_req, res) => {
-  res.status(200).send(router.rtpCapabilities);
-});
-
-app.get('/whep/transport', async (_req, res) => {
-  console.log('streamerTransport parameter');
-  res.status(200).send({
-    id: streamerTransport?.id,
-    iceParameters: streamerTransport?.iceParameters,
-    iceCandidates: streamerTransport?.iceCandidates,
-    dtlsParameters: streamerTransport?.dtlsParameters,
-    sctpParameters: streamerTransport?.sctpParameters,
-  });
-})
-
-app.get('/whep/video-producer-id', async (_req, res) => {
-  console.log('videoProducer id');
-  res.status(200).send(videoProducer?.id);
 });
 
 startServer().catch(err => {
