@@ -15,8 +15,9 @@ https://leaysgur.github.io/posts/2020/03/24/152051/
 
 ## PlainTransport と WebRtcTransport の違い
 ネゴシエーションを行う様な、client-server 間の通信にはWebRtcTransport,
-ffmpegからのスhttps://leaysgur.github.io/posts/2020/03/24/152051/トリームの様なただ受け取ればよいものはPlainTransport
+ffmpegからのストリームの様なただ受け取ればよいものはPlainTransport
 の気配を感じる
+→違うかも
 
 ## Client-Serverの連携について
 ある程度のネゴシエーション？というより情報のやりとり？は

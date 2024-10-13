@@ -23,8 +23,8 @@ export const createStream = async () => {
   // directionは受信専用でrecvonlyで良いと考えたが、
   // mediasoupが処理する際にa=ssrcが設定されていないとエラーになる？
   // 後でサーバ側で設定しなおすとして、いったんこれでいく
-  peerConnection.addTransceiver('audio', { direction: 'sendrecv' });
-  peerConnection.addTransceiver('video', { direction: 'sendrecv' });
+  peerConnection.addTransceiver('audio', { direction: 'recvonly' });
+  peerConnection.addTransceiver('video', { direction: 'recvonly' });
   const offer = await peerConnection.createOffer();
   const whepResponse = await fetch(
     'http://localhost:3000/whep', {
@@ -43,10 +43,10 @@ export const createStream = async () => {
   //const rtpCapabilities = extractRtpCapabilities({
   //  sdpObject: whepAnswer
   //});
-  const dtlsParameters = extractDtlsParameters({
-    sdpObject: whepAnswer
-  });
-  const iceParameters: Record<'audio'|'video', { usernameFragment: string, password: string}> = 
+  const dtlsParameters: mediasoup.types.DtlsParameters = 
+    extractDtlsParameters({ sdpObject: whepAnswer });
+  const iceParameters
+    : Record<'audio'|'video', { usernameFragment: string, password: string}> = 
     whepAnswer.media.map(m => ({
       [m.type]: {
         usernameFragment: m.iceUfrag,
@@ -115,7 +115,7 @@ export const createStream = async () => {
     iceParameters: iceParameters['video'],
     iceCandidates,
   };
-  console.log('recvTransportParmaeters: ', recvTransportParameters);
+  console.log('recvTransportParmaeters: %o', recvTransportParameters);
   const transport = device.createRecvTransport(
     recvTransportParameters
   );
@@ -123,6 +123,7 @@ export const createStream = async () => {
     console.log('transport connect');
   });
   console.log('rtpParameters: ', rtpParameters);
+  
   const videoStream = await transport.consume({
     id: transportId, 
     producerId: producerIds['video'],
