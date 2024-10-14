@@ -35,6 +35,11 @@ export const createStream = async () => {
       },
     }
   );
+  const resourceUrl = whepResponse.headers.get('Location');
+  console.log('resourceUrl: ', resourceUrl); 
+
+  
+  
   // mediasoup を通さずに直接RTP関連のAPI触るのはどうかと思ったが
   // SFUという面は素のAPIにはないので変ではない...と思う
   
@@ -70,23 +75,24 @@ export const createStream = async () => {
   const transportId = whepAnswer
     .invalid
     ?.find(d =>
-      d.value.startsWith('a=mediasoup-transport-id:')
+      d.value.startsWith('mediasoup-transport-id:')
     )
     ?.value.split(':')[1];
   const routerRtpCapabilities = JSON.parse(
     whepAnswer.invalid
       ?.find(d =>
-        d.value.startsWith('a=mediasoup-router-rtp-capabilities:')
+        d.value.startsWith('mediasoup-router-rtp-capabilities:')
       )
-      ?.value.replace('a=mediasoup-router-rtp-capabilities:', '')
+      ?.value.replace('mediasoup-router-rtp-capabilities:', '')
   );
+
 
   const producerIds: Record<'audio'|'video',string> = whepAnswer
     .media
     .map(m => ({
       [m.type as 'audio'|'video']: 
         m.invalid.find(
-          s => s.value.startsWith('a=mediasoup-producer-id:')
+          s => s.value.startsWith('mediasoup-producer-id:')
         )?.value?.split(':')[1]
     }))
     .reduce((acc, curr) => ({ ...acc, ...curr }), {}) as Record<'audio'|'video',string>;
@@ -97,9 +103,9 @@ export const createStream = async () => {
       [m.type as 'audio'|'video']:
         JSON.parse(
           m.invalid?.find(
-            s => s.value.startsWith('a=mediasoup-rtp-parameters:')
+            s => s.value.startsWith('mediasoup-rtp-parameters:')
           )?.value
-          .replace('a=mediasoup-rtp-parameters:','')
+          .replace('mediasoup-rtp-parameters:','')
         )
      }))
      .reduce((acc, curr) => ({ ...acc, ...curr }), {}) as Record<'video'|'audio',mediasoup.types.RtpParameters>;
@@ -108,19 +114,33 @@ export const createStream = async () => {
   // ただのrtpCapabilitiesではなく、routerRtpCapabilities
   // という名前になっているのはきになる
   // → cannot consume エラーが出るのでrouterCapabilitiesを取得する
+  console.log('routerRtpCapabilities: %o', routerRtpCapabilities);
   await device.load({ routerRtpCapabilities });
   const recvTransportParameters = {
     id: transportId,
-    dtlsParameters,
+    dtlsParameters: { 
+      ...dtlsParameters, 
+      role: 'client' as mediasoup.types.DtlsRole 
+    },
     iceParameters: iceParameters['video'],
     iceCandidates,
   };
   console.log('recvTransportParmaeters: %o', recvTransportParameters);
-  const transport = device.createRecvTransport(
-    recvTransportParameters
-  );
-  transport.on('connect', () => {
+  const transport = device.createRecvTransport(recvTransportParameters);
+  transport.on('connect', async ({ dtlsParameters }, callback, errback) => {
     console.log('transport connect');
+    try {
+      await fetch(resourceUrl, {
+        method: 'POST',
+        body: JSON.stringify(dtlsParameters),
+      })
+      callback();
+    } catch (error) {
+      errback(error);
+    }
+  });
+  transport.on('connectionstatechange', (newConnectionState) => {
+    console.log('connection stage: ', newConnectionState);
   });
   console.log('rtpParameters: ', rtpParameters);
   
