@@ -24,20 +24,22 @@ app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', origin);
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.header('Access-Control-Expose-Headers', '*')
   }
   next();
 });
 
 const httpServer = createServer(app);
 
-let worker: mediasoup.types.Worker;
-let router: mediasoup.types.Router;
-let broadcasterTransport: WebRtcTransport;
+let worker: mediasoup.types.Worker | undefined;
+let router: mediasoup.types.Router | undefined;
+let broadcasterTransport: WebRtcTransport | undefined;
 let producers: Record<'video'|'audio', mediasoup.types.Producer> = {
   'audio': undefined,
   'video': undefined,
 };
-let streamerTransport: WebRtcTransport;
+let streamerTransport: WebRtcTransport | undefined;
+let isStreamerTransportConnected: boolean = false;
 let consumers: Record<'video'|'audio', mediasoup.types.Producer> = {
   'audio': undefined,
   'video': undefined,
@@ -136,9 +138,11 @@ app.post('/whip', async (req, res) => {
         )
     };
     
-    if (broadcasterTransport == null) {
-      broadcasterTransport = await createWebRtcTransport(router);
-    }
+    // 毎回作り直してみる
+    broadcasterTransport = await createWebRtcTransport(router);
+    broadcasterTransport.observer.on('icestatechange', (newIceState) => {
+      console.log(`broadcaster ICE state changed to: ${newIceState}`);
+    });
 
     //await broadcasterTransport.setMaxIncomingBitrate(1500000);
 
@@ -222,138 +226,71 @@ app.post('/whip', async (req, res) => {
 });
 
 app.delete('/whip/test-broadcast', async (_req, res) => {
+  console.log(
+    'broadcasterTransport stats: %o', 
+    await broadcasterTransport?.getStats()
+  );
+  console.log(
+    'producers.audio stats: %o', 
+    await producers.audio?.getStats()
+  );
+  console.log(
+    'producers.video stats: %o', 
+    await producers.video?.getStats()
+  );
   broadcasterTransport?.close();
   res.status(200)
     .send(`transport ${broadcasterTransport?.id} closed.`);
   console.log(`transport: ${broadcasterTransport?.id} closed.`);
 });
 
-app.post('/whep', async (req, res) => {
+app.get('/test-stream/router-capabilities', async (req, res) => {
+  res.status(200).send(router.rtpCapabilities);
+});
+
+app.post('/test-stream/dtls-params-from-clientj
+
+app.post('/test-stream', async (req, res) => {
+  const dtlsParameters = 
+    JSON.parse(req.body) as mediasoup.types.DtlsParameters;
+  console.log(
+    'server dtlsParameters: %o', 
+    streamerTransport.dtlsParameters
+  );
+  console.log(
+    'client dtlsParameters: %o', 
+    dtlsParameters
+  );
   try {
-    const localSdpObject = sdpTransform.parse(req.body.toString());
-    console.log('body: ', req.body.toString());
-    const rtpCapabilities = sdpCommonUtils.extractRtpCapabilities({
-      sdpObject: localSdpObject
-    });
-    const dtlsParameters = sdpCommonUtils.extractDtlsParameters({
-      sdpObject: localSdpObject
-    });
-    const extendedRtpCapabilities = ortc.getExtendedRtpCapabilities(
-      rtpCapabilities, 
-      router.rtpCapabilities
-    );
-    const sendingRtpParametersByKind: Record<'audio' | 'video', mediasoup.types.RtpParameters> = {
-      audio: 
-        ortc.getSendingRtpParameters(
-          'audio', extendedRtpCapabilities
-        ),
-      video: 
-        ortc.getSendingRtpParameters(
-          'video', extendedRtpCapabilities
-        ),
-    };
-    const sendingRemoteRtpParametersByKind: Record<'audio' | 'video', mediasoup.types.RtpParameters> = {
-      audio: 
-        ortc.getSendingRemoteRtpParameters(
-          'audio', extendedRtpCapabilities
-        ),
-      video:
-        ortc.getSendingRemoteRtpParameters(
-          'video', extendedRtpCapabilities
-        )
-    };
-    
-    streamerTransport = await createWebRtcTransport(router);
-
-    //await streamerTransport.setMaxIncomingBitrate(1500000);
-
-    const remoteSdp: RemoteSdp = new RemoteSdp({
-      iceParameters: streamerTransport?.iceParameters,
-      iceCandidates: streamerTransport?.iceCandidates,
-      dtlsParameters: {
-        ...streamerTransport.dtlsParameters,
-        role: 'client',
-      },
-      sctpParameters: streamerTransport.sctpParameters,
-    });
-
-    await streamerTransport.connect({ dtlsParameters });
-
-
-    for (const { type, mid } of localSdpObject.media) {
-
-      console.log('type, mid: ', { type, mid });
-
-      const mediaSectionIdx = remoteSdp.getNextMediaSectionIdx();
-      const offerMediaObject = localSdpObject.media[mediaSectionIdx.idx];
-      const sendingRtpParameters: mediasoup.types.RtpParameters = { 
-        ...sendingRtpParametersByKind[type as 'video' | 'audio']
-      };
-      const sendingRemoteRtpParameters: mediasoup.types.RtpParameters = {
-        ...sendingRemoteRtpParametersByKind[type as 'video' | 'audio']
-      };
-
-      sendingRtpParameters.mid = mid?.toString();
-      sendingRtpParameters.rtcp!.cname =
-        sdpCommonUtils.getCname({ offerMediaObject });
-      sendingRtpParameters.encodings =
-        sdpUnifiedPlanUtils.getRtpEncodings({ offerMediaObject });
-
-      remoteSdp.send({
-        offerMediaObject,
-        reuseMid: mediaSectionIdx.reuseMid,
-        offerRtpParameters: sendingRtpParameters,
-        answerRtpParameters: sendingRemoteRtpParameters,
-        codecOptions: {},
-        extmapAllowMixed: true
-      });
-
-      const consumer = await streamerTransport.consume({
-        producerId: producers[type as 'audio'|'video']?.id,
-        rtpCapabilities: rtpCapabilities,
-      });
-      console.log('consumer created: ', consumer);
-
-      consumers[type as 'vidoe' | 'audio'] = consumer;
-
+    if (!isStreamerTransportConnected) {
+      console.log('streamerTransport connecting...');
+      await streamerTransport.connect({ dtlsParameters });
+      isStreamerTransportConnected = true;
+      console.log('streamer transport connected.');
+    } else {
+      console.log('streamer transport has already connected.');
     }
-
-    // mediasoup用の情報を追加する
-    // transportId, videoProducerId, audioProducerId の3つを
-    // media毎に付加する
-    const answerSdpObject = sdpTransform.parse(remoteSdp.getSdp());
-    answerSdpObject.media = answerSdpObject.media.map(m => ({
-      ...m,
-      invalid: [
-        ...(m.invalid ?? []), 
-        { value: `a=mediasoup-producer-id:${producers[m.type as 'video'|'audio']?.id}` },
-        { value: `a=mediasoup-rtp-parameters:${JSON.stringify(consumers[m.type as 'video'|'audio']?.rtpParameters)}` },
-      ],
-    }));
-    answerSdpObject.invalid = [
-      ...(answerSdpObject.invalid ?? []),
-      { value: `a=mediasoup-transport-id:${streamerTransport?.id}` },
-      { value: `a=mediasoup-router-rtp-capabilities:${JSON.stringify(router.rtpCapabilities)}`}
-    ];
-
-    const answer = sdpTransform.write(answerSdpObject);
-    console.log('answer: ', answer);
-
-    res.type('application/sdp')
-      .appendHeader(
-        'Location', 
-        'http://localhost:3000/whep/test-stream'
-      )
-      .status(201)
-      .send(answer);
-  } catch (error) {
-    console.error('Error during WebRTC offer handling: ', error);
-    res.status(500);
+    res.status(200).send('Connect transport OK');
+  } catch (err) {
+    console.error('Error connection streamer transport: ', err);
+    res.status(500).send('Connect transport ERROR');
   }
 });
 
 app.delete('/whep/test-stream', async (_req, res) => {
-  streamerTransport?.close();
+  console.log(
+    'streamerTransport stats: %o', 
+    await streamerTransport?.getStats()
+  );
+  console.log(
+    'video consumer stats: %o',
+    await consumers.video?.getStats()
+  );
+  console.log(
+    'audio consumer stats: %o',
+    await consumers.audio?.getStats()
+  );
+  streamerTransport.close();
   console.log('streamerTransport closed');
   res.status(200); 
 });
