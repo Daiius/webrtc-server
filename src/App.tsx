@@ -7,11 +7,12 @@ const App: React.FC = () => {
   React.useEffect(() => {
     (async () => {
       try {
-        const videoStream = await createStream();
+        const { videoConsumer, audioConsumer } = await createStream();
               
         if (videoRef.current) {
           const stream = new MediaStream();
-          stream.addTrack(videoStream.track);
+          stream.addTrack(videoConsumer.track);
+          stream.addTrack(audioConsumer.track);
           videoRef.current.srcObject = stream;
           await videoRef.current.play();
           console.log('video play() called!');

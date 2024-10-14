@@ -40,7 +40,7 @@ let producers: Record<'video'|'audio', mediasoup.types.Producer> = {
 };
 let streamerTransport: WebRtcTransport | undefined;
 let isStreamerTransportConnected: boolean = false;
-let consumers: Record<'video'|'audio', mediasoup.types.Producer> = {
+let consumers: Record<'video'|'audio', mediasoup.types.Consumer> = {
   'audio': undefined,
   'video': undefined,
 };
@@ -244,56 +244,71 @@ app.delete('/whip/test-broadcast', async (_req, res) => {
   console.log(`transport: ${broadcasterTransport?.id} closed.`);
 });
 
-app.get('/test-stream/router-capabilities', async (req, res) => {
+app.get('/mediasoup/router-rtp-capabilities', async (_req, res) => {
   res.status(200).send(router.rtpCapabilities);
 });
 
-app.post('/test-stream/dtls-params-from-clientj
-
-app.post('/test-stream', async (req, res) => {
-  const dtlsParameters = 
-    JSON.parse(req.body) as mediasoup.types.DtlsParameters;
-  console.log(
-    'server dtlsParameters: %o', 
-    streamerTransport.dtlsParameters
-  );
-  console.log(
-    'client dtlsParameters: %o', 
-    dtlsParameters
-  );
-  try {
-    if (!isStreamerTransportConnected) {
-      console.log('streamerTransport connecting...');
-      await streamerTransport.connect({ dtlsParameters });
-      isStreamerTransportConnected = true;
-      console.log('streamer transport connected.');
-    } else {
-      console.log('streamer transport has already connected.');
-    }
-    res.status(200).send('Connect transport OK');
-  } catch (err) {
-    console.error('Error connection streamer transport: ', err);
-    res.status(500).send('Connect transport ERROR');
+app.get('/mediasoup/streamer-transport-parameters', async (_req, res) => {
+  if (streamerTransport == null) {
+    streamerTransport = await createWebRtcTransport(router);
   }
+  res.status(200).send({
+    id: streamerTransport.id,
+    dtlsParameters: streamerTransport.dtlsParameters,
+    iceParameters: streamerTransport.iceParameters,
+    iceCandidates: streamerTransport.iceCandidates,
+  });
 });
 
-app.delete('/whep/test-stream', async (_req, res) => {
-  console.log(
-    'streamerTransport stats: %o', 
-    await streamerTransport?.getStats()
-  );
-  console.log(
-    'video consumer stats: %o',
-    await consumers.video?.getStats()
-  );
-  console.log(
-    'audio consumer stats: %o',
-    await consumers.audio?.getStats()
-  );
-  streamerTransport.close();
-  console.log('streamerTransport closed');
-  res.status(200); 
+app.post('/mediasoup/client-connect', async (req, res) => {
+  const dtlsParameters = req.body;
+  if (streamerTransport != null) {
+    streamerTransport.connect({ dtlsParameters });
+    res.status(200).send('client connect callback handled');
+  } else {
+    res.status(500).send('streamer transport is not ready');
+  } 
 });
+
+app.post('/mediasoup/consumer-parameters', async (req, res) => {
+  const clientCapabilities = req.body;
+  // なんとなく、producerはvideo/audioが一つずつあるという
+  // 仮定に依存していそうなのがきになる
+  // 本来ならばすべてのproducerをconsume出来るかチェックするべきかも
+  const consumeParameters = (type: 'video'|'audio') => ({
+    producerId: producers[type].id,
+    rtpCapabilities: clientCapabilities,
+    pause: true,
+  });
+  const canConsume = (type: 'video'|'audio') => router.canConsume(
+    consumeParameters(type)
+  );
+  const consumeWithCheck = async (type: 'video'|'audio') => {
+    if (canConsume(type)) {
+      consumers[type] = await streamerTransport.consume(
+        consumeParameters(type)
+      );
+    } else {
+      console.warn('cannot consume: %o', consumeParameters(type));
+    }
+  }
+  await consumeWithCheck('video');
+  await consumeWithCheck('audio');
+  const consumerParameters = (type: 'audio'|'video') => {
+    const consumer = consumers[type];
+    return {
+      id: consumer.id,
+      producerId: consumer.producerId,
+      kind: consumer.kind,
+      rtpParameters: consumer.rtpParameters,
+    };
+  };
+  res.status(200).send({
+    video: consumerParameters('video'),
+    audio: consumerParameters('audio'),
+  });
+});
+
 
 startServer().catch(err => {
   console.error('Failed to start server: ', err);
