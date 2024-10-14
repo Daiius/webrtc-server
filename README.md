@@ -13,10 +13,65 @@ https://leaysgur.github.io/posts/2020/03/24/152051/
 
 という概念が（少なくともサーバ側だけでも）ある。
 
+
+## mediasoupを使ったコードをいじり倒した上でドキュメントを再確認
+結構ちゃんと書いてある、用語などピンとこなかったのであれだが、
+もし最初に読んだときに理解できるならこれ以上のものはないかも
+
+### 勘違いしていそうなポイント
+外部のRTP通信でproducerを作るときには、PlainTransportらしい
+https://mediasoup.org/documentation/v3/communication-between-client-and-server/
+
+clientでconsumeするには、
+- device.rtpParameters をサーバに送信
+- そのパラメータを使ってrouter.canConsumeで確認
+- Okならtransport.consumeする
+- client側のtransport.connectで必要な処理を行う
+
+## WHIP/WHEPとmediasoup{,-client}間の通信について
+
+### WHIP/WHEP
+```plantuml
+@startuml
+participant "WHEP/WHIP Client" as client
+participant "WHEP/WHIP endpoint" as server
+participant "Media Server" as media
+participant "WHEP/WHIP session" as session
+client -> server : SDP offer
+client <- server : SDP answer \n201 Created \nLocation header
+client -> media : ICE request
+client <- media : ICE response
+client <-> media : DTLS setup
+client -> session : HTTP DELETE
+client <- session : 200 OK
+
+@enduml
+```
+
+## mediasoup/ WHIP(OBS)/WHEP?(client)
+```plantuml
+@startuml
+participant mediasoup
+participant worker
+participant router
+participant broadcasterTransport
+participant producer
+participant "WHIP information" as whip
+mediasoup -> worker ** : createWorker
+worker -> router ** : createRouter
+router -> broadcasterTransport ** : createWebRtcTransport \n(ip, announcedIp, ...)
+broadcasterTransport <- whip : dtlsParameters
+broadcasterTransport -> broadcasterTransport ++ : broadcasterTransport.connect({ dtlsParameters })
+broadcasterTransport <- whip : sendingRtpParameters
+broadcasterTransport -> producer ** : transport.produce({ kind, sendingRtpParameters })
+@enduml
+```
+
 ## PlainTransport と WebRtcTransport の違い
 ネゴシエーションを行う様な、client-server 間の通信にはWebRtcTransport,
-ffmpegからのスhttps://leaysgur.github.io/posts/2020/03/24/152051/トリームの様なただ受け取ればよいものはPlainTransport
+ffmpegからのストリームの様なただ受け取ればよいものはPlainTransport
 の気配を感じる
+→違うかも
 
 ## Client-Serverの連携について
 ある程度のネゴシエーション？というより情報のやりとり？は
