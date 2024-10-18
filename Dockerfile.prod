@@ -1,0 +1,14 @@
+FROM node:20
+
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml ./
+
+RUN npm install -g pnpm
+
+RUN pnpm install
+
+COPY . .
+
+CMD ["bash", "-c", "pnpm tsx server.ts & pnpm vite dev --host"]
+
