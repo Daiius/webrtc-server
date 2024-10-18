@@ -1,15 +1,21 @@
 import { Device } from 'mediasoup-client';
 
+const baseUrl = 'https://faveo-systema.net/webrtc';
+//const baseUrl = 'http://localhost/videmus/api';
+//const baseUrl = 'http://localhost:3000'
+//const idUrl = '/yellow-chart';
+const idUrl = '';
+
 export const createStream = async () => {
   const device = new Device();
   const routerRtpCapabilitiesResponse = await fetch(
-    `http://localhost/videmus/api/mediasoup/router-rtp-capabilities/yellow-chart`
+    `${baseUrl}/mediasoup/router-rtp-capabilities${idUrl}`
   );
   const routerRtpCapabilities = await routerRtpCapabilitiesResponse.json();
   console.log('routerRtpCapabilities: %o', routerRtpCapabilities);
   await device.load({ routerRtpCapabilities });
   const transportParametersResponse = await fetch(
-    `http://localhost/videmus/api/mediasoup/streamer-transport-parameters/yellow-chart`
+    `${baseUrl}/mediasoup/streamer-transport-parameters${idUrl}`
   );
   const transportParameters = await transportParametersResponse.json();
   console.log('transportParmaeters: %o', transportParameters);
@@ -20,7 +26,7 @@ export const createStream = async () => {
       console.log('transport connect');
       try {
         await fetch(
-          `http://localhost/videmus/api/mediasoup/client-connect/yellow-chart/${transportParameters.id}`, {
+          `${baseUrl}/mediasoup/client-connect${idUrl}${idUrl ? '/'+transportParameters.id : ''}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(dtlsParameters),
@@ -36,19 +42,26 @@ export const createStream = async () => {
   });
 
   const consumerParametersResponse = await fetch(
-    `http://localhost/videmus/api/mediasoup/consumer-parameters/yellow-chart/${transportParameters.id}`, {
+    `${baseUrl}/mediasoup/consumer-parameters${idUrl}${idUrl ? '/'+transportParameters.id : ''}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(device.rtpCapabilities),
   });
   const consumerParameters = await consumerParametersResponse.json();
-  const videoConsumerParameter = consumerParameters.find(p => p.kind === 'video');
-  const videoConsumer = videoConsumerParameter
-    && await transport.consume(videoConsumerParameter);
-  const audioConsumerParameter = consumerParameters.find(p => p.kind === 'audio');
-  const audioConsumer = audioConsumerParameter
-    && await transport.consume(audioConsumerParameter);
-
+  console.log('consumerParameters: %o', consumerParameters);
+  let videoConsumer;
+  let audioConsumer;
+  if (idUrl) {
+    const videoConsumerParameter = consumerParameters.find(p => p.kind === 'video');
+    videoConsumer = videoConsumerParameter
+      && await transport.consume(videoConsumerParameter);
+    const audioConsumerParameter = consumerParameters.find(p => p.kind === 'audio');
+    audioConsumer = audioConsumerParameter
+      && await transport.consume(audioConsumerParameter);
+  } else {
+    videoConsumer = await transport.consume(consumerParameters.video);
+    audioConsumer = await transport.consume(consumerParameters.audio);
+  }
   return { videoConsumer, audioConsumer };
 }
 
