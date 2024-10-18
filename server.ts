@@ -50,6 +50,8 @@ const startServer = async () => {
   worker = await createWorker({
     logLevel: 'warn',
     logTags: [ 'info', 'ice', 'dtls', 'rtp', 'rtcp' ],
+    rtcMinPort: 50000,
+    rtcMaxPort: 50100,
   });
   console.log('Worker created');
 
@@ -106,7 +108,6 @@ app.post('/whip', async (req, res) => {
 
   try {
     const localSdpObject = sdpTransform.parse(req.body.toString());
-    console.log('body: ', req.body.toString());
     const rtpCapabilities = sdpCommonUtils.extractRtpCapabilities({
       sdpObject: localSdpObject
     });
@@ -117,7 +118,10 @@ app.post('/whip', async (req, res) => {
       rtpCapabilities, 
       router.rtpCapabilities
     );
-    const sendingRtpParametersByKind: Record<'audio' | 'video', mediasoup.types.RtpParameters> = {
+    const sendingRtpParametersByKind: Record<
+      'audio' | 'video', 
+      mediasoup.types.RtpParameters
+    > = {
       audio: 
         ortc.getSendingRtpParameters(
           'audio', extendedRtpCapabilities
@@ -127,7 +131,10 @@ app.post('/whip', async (req, res) => {
           'video', extendedRtpCapabilities
         ),
     };
-    const sendingRemoteRtpParametersByKind: Record<'audio' | 'video', mediasoup.types.RtpParameters> = {
+    const sendingRemoteRtpParametersByKind: Record<
+      'audio' | 'video', 
+      mediasoup.types.RtpParameters
+    > = {
       audio: 
         ortc.getSendingRemoteRtpParameters(
           'audio', extendedRtpCapabilities
@@ -140,17 +147,16 @@ app.post('/whip', async (req, res) => {
     
     // 毎回作り直してみる
     broadcasterTransport = await createWebRtcTransport(router);
-    broadcasterTransport.observer.on('icestatechange', (newIceState) => {
-      console.log(`broadcaster ICE state changed to: ${newIceState}`);
-    });
 
-    //await broadcasterTransport.setMaxIncomingBitrate(1500000);
+    broadcasterTransport.observer.on(
+      'icestatechange', 
+      (newIceState) => console.log(
+        `broadcaster ICE state changed to: ${newIceState}`
+      )
+    );
 
     const remoteSdp = new RemoteSdp({
-      iceParameters: broadcasterTransport.iceParameters/*{
-        ...broadcasterTransport.iceParameters,
-        usernameFragment: localSdpObject.iceUfrag ?? '',
-      }*/,
+      iceParameters: broadcasterTransport.iceParameters,
       iceCandidates: broadcasterTransport.iceCandidates,
       dtlsParameters: {
         ...broadcasterTransport.dtlsParameters,
@@ -166,8 +172,10 @@ app.post('/whip', async (req, res) => {
 
       console.log('type, mid: ', { type, mid });
 
-      const mediaSectionIdx = remoteSdp.getNextMediaSectionIdx();
-      const offerMediaObject = localSdpObject.media[mediaSectionIdx.idx];
+      const mediaSectionIdx = 
+        remoteSdp.getNextMediaSectionIdx();
+      const offerMediaObject = 
+        localSdpObject.media[mediaSectionIdx.idx];
       console.log('offerMediaObject: ', offerMediaObject);
 
       const sendingRtpParameters: mediasoup.types.RtpParameters = { 
@@ -177,7 +185,8 @@ app.post('/whip', async (req, res) => {
         ...sendingRemoteRtpParametersByKind[type as 'video' | 'audio']
       };
 
-      sendingRtpParameters.mid = (mid as unknown as number).toString();
+      sendingRtpParameters.mid = 
+        (mid as unknown as number).toString();
       sendingRtpParameters.rtcp!.cname =
         sdpCommonUtils.getCname({ offerMediaObject });
       sendingRtpParameters.encodings =
@@ -201,12 +210,10 @@ app.post('/whip', async (req, res) => {
         rtpParameters: sendingRtpParameters
       });
 
-  
       console.log('producer created: ', producer);
 
       producers[type as 'video'|'audio'] = producer;
     }
-
 
     const answer = remoteSdp.getSdp();
     console.log('answer: ', answer);
