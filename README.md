@@ -2,6 +2,7 @@
 珍しく ChartGPT がそのまま動くようなプログラムを生成できないので
 色々検討+メモ
 
+
 ## 複数の配信管理の方法検討
 
 ### 2024-10-15
@@ -24,42 +25,43 @@ IDをどうやって通知するか...
 配信者は専用の画面を使って操作できるようにするべきか
 毎回はいらないかもだがOBSの設定画面スクショなども出しておきたいし...
 
-```plantuml
-@startuml
-actor 配信者 as broadcaster
-participant 配信者OBS as obs
-participant "ブラウザ\n配信画面" as broadcaster_page
-participant "WebRTCサーバ" as server
-participant "ブラウザ\n視聴画面" as streamer_page
-actor 視聴者 as streamer
+```mermaid
+%%{init: {"sequence": { "rightAngles": true } } }%%
+sequenceDiagram
+    actor broadcaster as 配信者
+    participant obs as 配信者OBS
+    participant broadcaster_page as ブラウザ<br/>配信画面
+    participant server as WebRTCサーバ 
+    participant streamer_page as ブラウザ<br/>視聴画面
+    actor streamer as 視聴者
 
-broadcaster -> broadcaster_page : 配信画面にアクセス\n配信ID取得ボタン押す
-broadcaster_page -> server : 配信用IDリクエスト
-broadcaster_page <-- server : 配信用IDを返却
-broadcaster_page -> broadcaster_page : 配信IDは配信者にしか\n見えないように\n?id=...へリダイレクト
-broadcaster <-- broadcaster_page: 配信ID＆視聴用URLを返す
-broadcaster -> obs : OBS起動\n配信IDをURLに含める\n配信開始
-obs -> server : WHIP形式 WebRTC接続
-obs <-- server : 配信IDを含めた\nメディア制御URLを返却
-obs -> server : WebRTC通信
-server -> server ++ : 配信IDをキーとしてリソース生成
-broadcaster_page -> server : 状態をポーリング
-broadcaster_page <-- server : 配信状況など更新
-====
-broadcaster -> streamer : 視聴用URLを共有
-streamer_page <- streamer : 視聴用URLにアクセス
-server <- streamer_page : WebRTC接続
-server -> streamer_page : WebRTC通信
-streamer_page -> streamer : 動画スタート
-====
-broadcaster -> obs : 配信停止ボタン押す
-obs -> server : メディア制御URLを用い\n配信停止
-server -> server -- : リソース破棄
-server -> streamer_page : 状態変化をイベントなどで\n検出できる？
-streamer_page -> streamer : 配信停止を通知
-broadcaster_page -> server : 状態をポーリング
-broadcaster_page <-- server : 配信状況など更新
-@enduml
+    Note right of broadcaster : 配信開始
+    broadcaster ->> broadcaster_page : 配信画面にアクセス<br/>配信ID取得ボタン押す
+    broadcaster_page ->> server : 配信用IDリクエスト
+    server -->> broadcaster_page : 配信用IDを返却
+    broadcaster_page ->> broadcaster_page : ?id=...へリダイレクト
+    broadcaster_page -->> broadcaster : 配信ID＆視聴用URLを返す
+    broadcaster ->> obs : OBS起動<br/>配信IDをURLに含める<br/>配信開始
+    obs ->> server : WHIP形式 WebRTC接続
+    server -->> obs : 配信IDを含めた<br/>メディア制御URLを返却
+    obs ->> server : WebRTC通信
+    server ->>+ server : 配信IDをキーとしてリソース生成
+    broadcaster_page ->> server : 状態をポーリング
+    server -->> broadcaster_page : 配信状況など更新
+    Note right of broadcaster : 視聴の流れ
+    broadcaster ->> streamer : 視聴用URLを共有
+    streamer ->> streamer_page : 視聴用URLにアクセス
+    streamer_page ->> server : WebRTC接続
+    server ->> streamer_page : WebRTC通信
+    streamer_page ->> streamer : 動画スタート
+    Note right of broadcaster : 配信停止
+    broadcaster ->> obs : 配信停止ボタン押す
+    obs ->> server : メディア制御URLを用いて<br/>配信停止
+    server ->>-server : リソース破棄
+    server ->> streamer_page : 状態変化を検出？
+    streamer_page ->> streamer : 配信停止を通知
+    broadcaster_page ->> server : 状態をポーリング
+    server -->> broadcaster_page : 配信状況など更新
 ```
 
 - 配信停止処理を行わなければ配信用IDは有効なままなので、
@@ -142,40 +144,44 @@ clientでconsumeするには、
 ## WHIP/WHEPとmediasoup{,-client}間の通信について
 RFCより(https://datatracker.ietf.org/doc/html/draft-ietf-wish-whip)
 ### WHIP/WHEP
-```plantuml
-@startuml
-participant "WHEP/WHIP Client" as client
-participant "WHEP/WHIP endpoint" as server
-participant "Media Server" as media
-participant "WHEP/WHIP session" as session
-client -> server : SDP offer
-client <- server : SDP answer \n201 Created \nLocation header
-client -> media : ICE request
-client <- media : ICE response
-client <-> media : DTLS setup
-client -> session : HTTP DELETE
-client <- session : 200 OK
+```mermaid
+sequenceDiagram
+  participant client as WHEP/WHIP Client 
+  participant server as WHEP/WHIP endpoint 
+  participant media as Media Server
+  participant session as WHEP/WHIP session
 
-@enduml
+  client ->> server : SDP offer
+  server -->> client: SDP answer<br/>201 Created<br/>Location header
+  client ->> media : ICE request
+  media -->> client : ICE response
+  client <<->> media : DTLS setup
+  client ->> session : HTTP DELETE
+  session ->> client : 200 OK
 ```
 
 ## mediasoup/ WHIP(OBS)/WHEP?(client)
-```plantuml
-@startuml
-participant mediasoup
-participant worker
-participant router
-participant broadcasterTransport
-participant producer
-participant "WHIP information" as whip
-mediasoup -> worker ** : createWorker
-worker -> router ** : createRouter
-router -> broadcasterTransport ** : createWebRtcTransport \n(ip, announcedIp, ...)
-broadcasterTransport <- whip : dtlsParameters
-broadcasterTransport -> broadcasterTransport ++ : broadcasterTransport.connect({ dtlsParameters })
-broadcasterTransport <- whip : sendingRtpParameters
-broadcasterTransport -> producer ** : transport.produce({ kind, sendingRtpParameters })
-@enduml
+```mermaid
+%%{init: {"sequence": { "rightAngles": true } } }%%
+sequenceDiagram
+  participant mediasoup
+  participant worker
+  participant router
+  participant broadcasterTransport
+  participant producer
+  participant whip as WHIP information
+  mediasoup ->>+ worker : createWorker
+  worker ->>+ router : createRouter
+  %% { "messageAlign": "left" } %%
+  router ->>+ broadcasterTransport : createWebRtcTransport<br/>(ip, announcedIp, ...)
+  whip ->> broadcasterTransport : dtlsParameters
+  broadcasterTransport ->> broadcasterTransport : broadcasterTransport.connect({ dtlsParameters })
+  whip ->> broadcasterTransport : sendingRtpParameters
+  broadcasterTransport ->>+ producer : transport.produce({<br/>kind,<br/>sendingRtpParameters<br/>})
+  producer ->>- producer : producer.close()
+  broadcasterTransport ->>- broadcasterTransport : broadcasterTransport.close()
+  router ->>- router: router.close()
+  worker ->>- worker: worker.close()
 ```
 
 ## Client-Serverの連携について
@@ -203,4 +209,20 @@ server と同じ構成のtranpsortをクライアント側でも作っている�
 → mediasoupドキュメントに色々書いてある
 
 https://mediasoup.org/documentation/v3/communication-between-client-and-server/
+# mermaidテスト
+PlantUMLからmermaidに移行するためのちょっとしたテスト
+```mermaid
+sequenceDiagram
+  participant A as 日本語 
+  participant B
+  Note right of B: 文法ミスは開発者ツールで見られる<br/>(Previm, mermaid.min.js)
+  %% コメントは%記号2連続
+  %% PlantUMLはエラーを出力画像に出していたが、
+  %% それ自体ちょっと複雑すぎる（悪用できる？）感じもするから
+  %% こんなもんで良いのだろう...
+  Note right of B: 改行するにはbrタグ、ソース中では頑張って1行に収める必要あり<br/>(shell scriptの \ に相当するものはなし)
+  Note right of B: エイリアスの設定方法はPlantUMLと順番が逆
+  A ->> B : Hello!Mermaid!
+  A <<->> B : 両方向の矢印が追加されたのは<br/>割と最近のバージョン(v11?)から
+```
 
