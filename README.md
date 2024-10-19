@@ -2,6 +2,7 @@
 珍しく ChartGPT がそのまま動くようなプログラムを生成できないので
 色々検討+メモ
 
+
 ## 複数の配信管理の方法検討
 
 ### 2024-10-15
@@ -24,42 +25,42 @@ IDをどうやって通知するか...
 配信者は専用の画面を使って操作できるようにするべきか
 毎回はいらないかもだがOBSの設定画面スクショなども出しておきたいし...
 
-```plantuml
-@startuml
-actor 配信者 as broadcaster
-participant 配信者OBS as obs
-participant "ブラウザ\n配信画面" as broadcaster_page
-participant "WebRTCサーバ" as server
-participant "ブラウザ\n視聴画面" as streamer_page
-actor 視聴者 as streamer
+```mermaid
+sequenceDiagram
+    actor broadcaster as 配信者
+    participant obs as 配信者OBS
+    participant broadcaster_page as ブラウザ<br/>配信画面
+    participant server as WebRTCサーバ 
+    participant streamer_page as ブラウザ<br/>視聴画面
+    actor streamer as 視聴者
 
-broadcaster -> broadcaster_page : 配信画面にアクセス\n配信ID取得ボタン押す
-broadcaster_page -> server : 配信用IDリクエスト
-broadcaster_page <-- server : 配信用IDを返却
-broadcaster_page -> broadcaster_page : 配信IDは配信者にしか\n見えないように\n?id=...へリダイレクト
-broadcaster <-- broadcaster_page: 配信ID＆視聴用URLを返す
-broadcaster -> obs : OBS起動\n配信IDをURLに含める\n配信開始
-obs -> server : WHIP形式 WebRTC接続
-obs <-- server : 配信IDを含めた\nメディア制御URLを返却
-obs -> server : WebRTC通信
-server -> server ++ : 配信IDをキーとしてリソース生成
-broadcaster_page -> server : 状態をポーリング
-broadcaster_page <-- server : 配信状況など更新
-====
-broadcaster -> streamer : 視聴用URLを共有
-streamer_page <- streamer : 視聴用URLにアクセス
-server <- streamer_page : WebRTC接続
-server -> streamer_page : WebRTC通信
-streamer_page -> streamer : 動画スタート
-====
-broadcaster -> obs : 配信停止ボタン押す
-obs -> server : メディア制御URLを用い\n配信停止
-server -> server -- : リソース破棄
-server -> streamer_page : 状態変化をイベントなどで\n検出できる？
-streamer_page -> streamer : 配信停止を通知
-broadcaster_page -> server : 状態をポーリング
-broadcaster_page <-- server : 配信状況など更新
-@enduml
+    Note right of broadcaster : 配信開始
+    broadcaster ->> broadcaster_page : 配信画面にアクセス<br/>配信ID取得ボタン押す
+    broadcaster_page ->> server : 配信用IDリクエスト
+    server -->> broadcaster_page : 配信用IDを返却
+    broadcaster_page ->> broadcaster_page : ?id=...へリダイレクト
+    broadcaster_page -->> broadcaster : 配信ID＆視聴用URLを返す
+    broadcaster ->> obs : OBS起動<br/>配信IDをURLに含める<br/>配信開始
+    obs ->> server : WHIP形式 WebRTC接続
+    server -->> obs : 配信IDを含めた<br/>メディア制御URLを返却
+    obs ->> server : WebRTC通信
+    server ->>+ server : 配信IDをキーとしてリソース生成
+    broadcaster_page ->> server : 状態をポーリング
+    server -->> broadcaster_page : 配信状況など更新
+    Note right of broadcaster : 視聴の流れ
+    broadcaster ->> streamer : 視聴用URLを共有
+    streamer ->> streamer_page : 視聴用URLにアクセス
+    streamer_page ->> server : WebRTC接続
+    server ->> streamer_page : WebRTC通信
+    streamer_page ->> streamer : 動画スタート
+    Note right of broadcaster : 配信停止
+    broadcaster ->> obs : 配信停止ボタン押す
+    obs ->> server : メディア制御URLを用いて<br/>配信停止
+    server ->>-server : リソース破棄
+    server ->> streamer_page : 状態変化を検出？
+    streamer_page ->> streamer : 配信停止を通知
+    broadcaster_page ->> server : 状態をポーリング
+    server -->> broadcaster_page : 配信状況など更新
 ```
 
 - 配信停止処理を行わなければ配信用IDは有効なままなので、
@@ -203,4 +204,19 @@ server と同じ構成のtranpsortをクライアント側でも作っている�
 → mediasoupドキュメントに色々書いてある
 
 https://mediasoup.org/documentation/v3/communication-between-client-and-server/
+# mermaidテスト
+PlantUMLからmermaidに移行するためのちょっとしたテスト
+```mermaid
+sequenceDiagram
+  participant A as 日本語 
+  participant B
+  Note right of B: 文法ミスは開発者ツールで見られる<br/>(Previm, mermaid.min.js)
+  %% コメントは%記号2連続
+  %% PlantUMLはエラーを出力画像に出していたが、
+  %% それ自体ちょっと複雑すぎる（悪用できる？）感じもするから
+  %% こんなもんで良いのだろう...
+  Note right of B: 改行するにはbrタグ、ソース中では頑張って1行に収める必要あり<br/>(shell scriptの \ に相当するものはなし)
+  Note right of B: エイリアスの設定方法はPlantUMLと順番が逆
+  A ->> B : Hello!Mermaid!
+```
 
